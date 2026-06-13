@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import requests
 from pathlib import Path
 from datetime import datetime
 
@@ -11,15 +12,33 @@ QDRANT_HOST      = "localhost"
 QDRANT_PORT      = 6333
 COLLECTION_NAME  = "rag_summaries"
 EMBED_MODEL      = "nomic-embed-text"
+OLLAMA_BASE_URL  = "http://localhost:11434"
 CHUNK_SIZE       = 1024    # summaries are dense; larger chunks work well
 CHUNK_OVERLAP    = 64
 BATCH_SIZE       = 64
 NUM_WORKERS      = 4
+OLLAMA_RETRIES   = 10
+OLLAMA_WAIT      = 15      # seconds between retries
 # =========================================================
 
 
 def ts():
     return datetime.now().strftime("%H:%M:%S")
+
+
+def wait_for_ollama():
+    """Block until Ollama responds, retrying every OLLAMA_WAIT seconds."""
+    for attempt in range(1, OLLAMA_RETRIES + 1):
+        try:
+            r = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+            if r.status_code == 200:
+                print(f"[{ts()}] Ollama ready")
+                return
+        except Exception:
+            pass
+        print(f"[{ts()}] Ollama not reachable (attempt {attempt}/{OLLAMA_RETRIES}) — retrying in {OLLAMA_WAIT}s...")
+        time.sleep(OLLAMA_WAIT)
+    raise RuntimeError(f"Ollama did not respond after {OLLAMA_RETRIES} attempts")
 
 
 def load_tracker() -> dict:
@@ -77,7 +96,9 @@ def main():
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, VectorParams
 
-    Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL)
+    wait_for_ollama()
+
+    Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL, base_url=OLLAMA_BASE_URL)
     Settings.node_parser = SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
 
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=60)
@@ -182,7 +203,20 @@ def main():
                 )
 
                 t0 = time.time()
-                nodes = pipeline.run(documents=[doc], show_progress=False)
+                nodes = None
+                for attempt in range(1, OLLAMA_RETRIES + 1):
+                    try:
+                        nodes = pipeline.run(documents=[doc], show_progress=False)
+                        break
+                    except Exception as embed_err:
+                        msg = str(embed_err).lower()
+                        if any(k in msg for k in ("connection", "connect", "refused", "timeout", "unreachable")):
+                            print(f"\n[{ts()}] Ollama error (attempt {attempt}/{OLLAMA_RETRIES}): {embed_err}")
+                            wait_for_ollama()
+                        else:
+                            raise
+                if nodes is None:
+                    raise RuntimeError("Embedding failed after all retries")
                 elapsed = time.time() - t0
 
                 print(f"— {len(nodes)} node(s)  {elapsed:.1f}s")
