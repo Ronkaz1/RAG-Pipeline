@@ -41,6 +41,21 @@ def wait_for_ollama():
     raise RuntimeError(f"Ollama did not respond after {OLLAMA_RETRIES} attempts")
 
 
+def wait_for_qdrant():
+    """Block until Qdrant responds, retrying every OLLAMA_WAIT seconds."""
+    for attempt in range(1, OLLAMA_RETRIES + 1):
+        try:
+            r = requests.get(f"http://{QDRANT_HOST}:{QDRANT_PORT}/healthz", timeout=5)
+            if r.status_code == 200:
+                print(f"[{ts()}] Qdrant ready")
+                return
+        except Exception:
+            pass
+        print(f"[{ts()}] Qdrant not reachable (attempt {attempt}/{OLLAMA_RETRIES}) — retrying in {OLLAMA_WAIT}s...")
+        time.sleep(OLLAMA_WAIT)
+    raise RuntimeError(f"Qdrant did not respond after {OLLAMA_RETRIES} attempts")
+
+
 def load_tracker() -> dict:
     try:
         with open(TRACKER_FILE, "r", encoding="utf-8") as f:
@@ -96,6 +111,7 @@ def main():
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, VectorParams
 
+    wait_for_qdrant()
     wait_for_ollama()
 
     Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL, base_url=OLLAMA_BASE_URL)
