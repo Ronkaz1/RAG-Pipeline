@@ -1,0 +1,21 @@
+# Core RAG / vector store
+llama-index
+llama-index-vector-stores-qdrant
+llama-index-embeddings-ollama
+llama-index-llms-ollama
+qdrant-client
+
+# Database
+pyodbc
+
+# LLM API (Grok uses OpenAI-compatible SDK)
+openai
+
+# Document parsers (used by SimpleDirectoryReader in ingester.py)
+pypdf
+python-docx
+python-pptx
+openpyxl
+xlrd
+beautifulsoup4
+lxml
